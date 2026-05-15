@@ -199,6 +199,28 @@ def get_upcoming_checks(days_ahead: int = 1) -> list[dict]:
 def get_checklist() -> list[dict]:
     return get_spreadsheet().worksheet("checklist").get_all_records()
 
+def update_checklist(updates: dict):
+    """
+    updates = {
+      "task_id_participant_name": {
+        "check_date_1_done": "TRUE",
+        ...
+      }
+    }
+    """
+    ws = get_spreadsheet().worksheet("checklist")
+    records = ws.get_all_records()
+    headers = ws.row_values(1)
+
+    col_map = {h: i+1 for i, h in enumerate(headers)}
+
+    for i, row in enumerate(records, start=2):
+        key = f"{row['task_id']}_{row['participant_name']}"
+        if key in updates:
+            for field, value in updates[key].items():
+                if field in col_map:
+                    ws.update_cell(i, col_map[field], value)
+
 
 if __name__ == "__main__":
     print("Подключаемся...")

@@ -14,7 +14,7 @@ from sheets import (
     get_departments, get_tasks_by_department, get_task_by_id,
     add_participant, get_participant_by_telegram,
     get_upcoming_checks, get_all_tasks, get_participants_for_task,
-    get_all_participants,
+    get_all_participants, get_checklist, update_checklist,
 )
 
 # ──────────────────────────────────────────────
@@ -22,7 +22,7 @@ from sheets import (
 # ──────────────────────────────────────────────
 TELEGRAM_TOKEN = "8930763288:AAH6VHTtUhRnlLWyLykd8OUkHxDVkIvyMB8"
 ORGANIZER_TELEGRAM_ID = 1251988176
-SITE_URL = "https://spbgasu-event.github.io/taskbot-site/"  # ← потом заменишь на реальный адрес сайта
+SITE_URL = "https://spbgasu-event.github.io/taskbot-site/"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -75,6 +75,18 @@ def task_participants(task_id: int):
 def get_participant(telegram_id: int):
     p = get_participant_by_telegram(telegram_id)
     return {"participant": p}
+
+@app.get("/checklist")
+def checklist():
+    return {"checklist": get_checklist()}
+
+class ChecklistUpdate(BaseModel):
+    updates: dict
+
+@app.post("/checklist/update")
+def checklist_update(req: ChecklistUpdate):
+    update_checklist(req.updates)
+    return {"status": "ok"}
 
 @app.post("/register")
 async def register(req: RegisterRequest):
