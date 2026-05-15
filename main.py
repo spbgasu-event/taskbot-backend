@@ -233,6 +233,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ──────────────────────────────────────────────
 # ПЛАНИРОВЩИК
 # ──────────────────────────────────────────────
+@app.get("/test-reminders")
+async def test_reminders():
+    await send_reminders()
+    return {"status": "ok", "message": "Уведомления отправлены"}
 async def send_reminders():
     logger.info("Проверяем напоминания...")
 
