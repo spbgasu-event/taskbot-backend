@@ -269,7 +269,7 @@ async def send_reminders():
 # ──────────────────────────────────────────────
 async def main():
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(send_reminders, "cron", hour=9, minute=0)
+    scheduler.add_job(send_reminders, "cron", hour=5, minute=0)  # 5:00 UTC = 8:00 МСК
     scheduler.start()
     logger.info("✅ Планировщик запущен")
 
