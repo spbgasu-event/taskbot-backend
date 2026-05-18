@@ -33,17 +33,16 @@ def init_sheets():
     existing = [ws.title for ws in ss.worksheets()]
 
     if "tasks" not in existing:
-        ws = ss.add_worksheet(title="tasks", rows=100, cols=10)
+        ws = ss.add_worksheet(title="tasks", rows=100, cols=11)
     else:
         ws = ss.worksheet("tasks")
     if ws.row_values(1) == []:
         ws.append_row([
             "task_id", "title", "department", "description",
             "max_participants", "current_participants",
-            "check_date_1", "check_date_2", "deadline"
+            "check_date_1", "check_date_2", "deadline", "status"
         ])
 
-    # participants теперь с telegram_username
     if "participants" not in existing:
         ws = ss.add_worksheet(title="participants", rows=200, cols=7)
     else:
@@ -70,23 +69,33 @@ def init_sheets():
 # ──────────────────────────────────────────────
 # ЗАДАЧИ
 # ──────────────────────────────────────────────
-def get_all_tasks() -> list[dict]:
+def _get_tasks_cached():
     ws = get_spreadsheet().worksheet("tasks")
     return ws.get_all_records()
 
+def get_all_tasks() -> list[dict]:
+    return _get_tasks_cached()
+
+def get_open_tasks() -> list[dict]:
+    """Только открытые задачи (не закрытые организатором)."""
+    return [t for t in _get_tasks_cached() if str(t.get("status", "")).lower() != "closed"]
+
+def get_closed_tasks() -> list[dict]:
+    """Только закрытые задачи."""
+    return [t for t in _get_tasks_cached() if str(t.get("status", "")).lower() == "closed"]
+
 def get_tasks_by_department(department: str) -> list[dict]:
-    return [t for t in get_all_tasks() if t["department"] == department]
+    return [t for t in get_open_tasks() if t["department"] == department]
 
 def get_task_by_id(task_id: int) -> dict | None:
-    for t in get_all_tasks():
+    for t in _get_tasks_cached():
         if int(t["task_id"]) == int(task_id):
             return t
     return None
 
 def get_departments() -> list[str]:
-    tasks = get_all_tasks()
     seen = []
-    for t in tasks:
+    for t in get_open_tasks():
         if t["department"] not in seen:
             seen.append(t["department"])
     return seen
@@ -94,6 +103,8 @@ def get_departments() -> list[str]:
 def is_task_available(task_id: int) -> bool:
     task = get_task_by_id(task_id)
     if not task:
+        return False
+    if str(task.get("status", "")).lower() == "closed":
         return False
     return int(task["current_participants"]) < int(task["max_participants"])
 
@@ -104,6 +115,22 @@ def increment_task_participants(task_id: int):
         if int(row["task_id"]) == int(task_id):
             ws.update_cell(i, 6, int(row["current_participants"]) + 1)
             return
+
+def close_task(task_id: int) -> bool:
+    """Закрывает задачу — она пропадает с сайта записи."""
+    ws = get_spreadsheet().worksheet("tasks")
+    headers = ws.row_values(1)
+    # Добавляем колонку status если её нет
+    if "status" not in headers:
+        ws.update_cell(1, len(headers) + 1, "status")
+        headers.append("status")
+    status_col = headers.index("status") + 1
+    records = ws.get_all_records()
+    for i, row in enumerate(records, start=2):
+        if int(row["task_id"]) == int(task_id):
+            ws.update_cell(i, status_col, "closed")
+            return True
+    return False
 
 
 # ──────────────────────────────────────────────
@@ -117,7 +144,6 @@ def get_participant_by_telegram(telegram_id: int) -> dict | None:
     return None
 
 def is_already_in_task(telegram_id: int, task_id: int) -> bool:
-    """Проверяет, уже ли участник записан на эту задачу."""
     ws = get_spreadsheet().worksheet("participants")
     for r in ws.get_all_records():
         if str(r["telegram_id"]) == str(telegram_id) and str(r["task_id"]) == str(task_id):
@@ -129,11 +155,6 @@ def get_participants_for_task(task_id: int) -> list[dict]:
     return [r for r in ws.get_all_records() if str(r["task_id"]) == str(task_id)]
 
 def add_participant(name: str, telegram_id: int, telegram_username: str, task_id: int) -> tuple[bool, str]:
-    """
-    Записывает участника на задачу.
-    Возвращает (True, "") если успешно.
-    Возвращает (False, причина) если нет.
-    """
     if is_already_in_task(telegram_id, task_id):
         return False, "already_registered"
     if not is_task_available(task_id):
@@ -146,7 +167,6 @@ def add_participant(name: str, telegram_id: int, telegram_username: str, task_id
     all_p = ws_p.get_all_records()
     new_id = len(all_p) + 1
 
-    # Если участник уже есть в системе — берём его имя из первой записи
     existing = get_participant_by_telegram(telegram_id)
     real_name = existing["name"] if existing else name
 
@@ -168,13 +188,51 @@ def get_all_participants() -> list[dict]:
 
 
 # ──────────────────────────────────────────────
+# СТАТИСТИКА НЕВЫПОЛНЕННЫХ
+# ──────────────────────────────────────────────
+def get_failed_participants() -> list[dict]:
+    """
+    Возвращает участников закрытых задач у которых final_done != TRUE.
+    Это те кто не выполнил задачу в срок.
+    """
+    closed_ids = {str(t["task_id"]) for t in get_closed_tasks()}
+    checklist = get_checklist()
+    participants = get_all_participants()
+
+    # Индекс участников по имени+задаче
+    p_index = {}
+    for p in participants:
+        key = f"{p['task_id']}_{p['name']}"
+        p_index[key] = p
+
+    failed = []
+    for row in checklist:
+        if str(row["task_id"]) not in closed_ids:
+            continue
+        if str(row.get("final_done", "FALSE")).upper() != "TRUE":
+            key = f"{row['task_id']}_{row['participant_name']}"
+            p = p_index.get(key, {})
+            failed.append({
+                "name": row["participant_name"],
+                "telegram_username": p.get("telegram_username", ""),
+                "telegram_id": p.get("telegram_id", ""),
+                "task_id": row["task_id"],
+                "task_title": row["task_title"],
+                "check_date_1_done": row.get("check_date_1_done", "FALSE"),
+                "check_date_2_done": row.get("check_date_2_done", "FALSE"),
+                "final_done": row.get("final_done", "FALSE"),
+            })
+    return failed
+
+
+# ──────────────────────────────────────────────
 # НАПОМИНАНИЯ
 # ──────────────────────────────────────────────
 def get_upcoming_checks(days_ahead: int = 1) -> list[dict]:
     from datetime import timedelta
     target_date = (datetime.now() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
     today = datetime.now().strftime("%Y-%m-%d")
-    tasks = get_all_tasks()
+    tasks = get_open_tasks()
     participants = get_all_participants()
 
     result = []
@@ -200,20 +258,10 @@ def get_checklist() -> list[dict]:
     return get_spreadsheet().worksheet("checklist").get_all_records()
 
 def update_checklist(updates: dict):
-    """
-    updates = {
-      "task_id_participant_name": {
-        "check_date_1_done": "TRUE",
-        ...
-      }
-    }
-    """
     ws = get_spreadsheet().worksheet("checklist")
     records = ws.get_all_records()
     headers = ws.row_values(1)
-
     col_map = {h: i+1 for i, h in enumerate(headers)}
-
     for i, row in enumerate(records, start=2):
         key = f"{row['task_id']}_{row['participant_name']}"
         if key in updates:

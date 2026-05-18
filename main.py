@@ -13,8 +13,9 @@ from telegram import Update
 from sheets import (
     get_departments, get_tasks_by_department, get_task_by_id,
     add_participant, get_participant_by_telegram,
-    get_upcoming_checks, get_all_tasks, get_participants_for_task,
-    get_all_participants, get_checklist, update_checklist,
+    get_upcoming_checks, get_all_tasks, get_open_tasks, get_closed_tasks,
+    get_participants_for_task, get_all_participants,
+    get_checklist, update_checklist, close_task, get_failed_participants,
 )
 
 # ──────────────────────────────────────────────
@@ -47,18 +48,35 @@ class RegisterRequest(BaseModel):
     telegram_username: str
     task_id: int
 
+class ChecklistUpdate(BaseModel):
+    updates: dict
+
+# Отделы (только открытые задачи)
 @app.get("/departments")
 def departments():
     return {"departments": get_departments()}
 
+# Задачи отдела (только открытые)
 @app.get("/tasks/{department}")
 def tasks_by_dept(department: str):
     return {"tasks": get_tasks_by_department(department)}
 
+# Все задачи (для организатора)
 @app.get("/tasks-all")
 def all_tasks():
     return {"tasks": get_all_tasks()}
 
+# Только открытые задачи (для сайта)
+@app.get("/tasks-open")
+def open_tasks():
+    return {"tasks": get_open_tasks()}
+
+# Только закрытые задачи
+@app.get("/tasks-closed")
+def closed_tasks():
+    return {"tasks": get_closed_tasks()}
+
+# Детали задачи
 @app.get("/task/{task_id}")
 def task_detail(task_id: int):
     task = get_task_by_id(task_id)
@@ -66,28 +84,47 @@ def task_detail(task_id: int):
         raise HTTPException(status_code=404, detail="Задача не найдена")
     return task
 
+# Участники задачи
 @app.get("/task/{task_id}/participants")
 def task_participants(task_id: int):
-    participants = get_participants_for_task(task_id)
-    return {"participants": participants}
+    return {"participants": get_participants_for_task(task_id)}
 
+# Закрыть задачу
+@app.post("/task/{task_id}/close")
+def close_task_endpoint(task_id: int):
+    success = close_task(task_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    return {"status": "ok"}
+
+# Участник по Telegram ID
 @app.get("/participant/{telegram_id}")
 def get_participant(telegram_id: int):
     p = get_participant_by_telegram(telegram_id)
     return {"participant": p}
 
+# Все участники
+@app.get("/participants-all")
+def all_participants():
+    return {"participants": get_all_participants()}
+
+# Чеклист
 @app.get("/checklist")
 def checklist():
     return {"checklist": get_checklist()}
 
-class ChecklistUpdate(BaseModel):
-    updates: dict
-
+# Обновить чеклист
 @app.post("/checklist/update")
 def checklist_update(req: ChecklistUpdate):
     update_checklist(req.updates)
     return {"status": "ok"}
 
+# Статистика невыполненных
+@app.get("/stats/failed")
+def failed_stats():
+    return {"failed": get_failed_participants()}
+
+# Запись на задачу
 @app.post("/register")
 async def register(req: RegisterRequest):
     success, reason = add_participant(req.name, req.telegram_id, req.telegram_username, req.task_id)
@@ -100,15 +137,9 @@ async def register(req: RegisterRequest):
     task = get_task_by_id(req.task_id)
     participants = get_participants_for_task(req.task_id)
 
-    # Формируем список участников с тегами
-    tags = " ".join([
-        f"@{p['telegram_username']}" for p in participants
-        if p.get("telegram_username")
-    ])
+    tags = " ".join([f"@{p['telegram_username']}" for p in participants if p.get("telegram_username")])
 
-    # Уведомление новому участнику
-    await notify(
-        req.telegram_id,
+    await notify(req.telegram_id,
         f"✅ Ты записался на задачу!\n\n"
         f"📌 *{task['title']}*\n"
         f"🏢 Отдел: {task['department']}\n"
@@ -118,24 +149,20 @@ async def register(req: RegisterRequest):
         f"👥 Команда: {tags if tags else 'пока только ты'}"
     )
 
-    # Уведомление остальным участникам задачи о новом члене команды
     new_tag = f"@{req.telegram_username}"
     for p in participants:
         if str(p["telegram_id"]) != str(req.telegram_id):
-            await notify(
-                int(p["telegram_id"]),
-                f"👋 В вашу задачу *{task['title']}* добавился новый участник {new_tag}!\n\n"
+            await notify(int(p["telegram_id"]),
+                f"👋 В вашу задачу *{task['title']}* добавился {new_tag}!\n\n"
                 f"👥 Вся команда: {tags}"
             )
 
-    # Уведомление организатору
-    await notify(
-        ORGANIZER_TELEGRAM_ID,
+    await notify(ORGANIZER_TELEGRAM_ID,
         f"🔔 Новый участник!\n\n"
         f"👤 {req.name} ({new_tag})\n"
         f"📌 Задача: *{task['title']}*\n"
         f"🏢 Отдел: {task['department']}\n"
-        f"👥 Всего в задаче: {len(participants)}/{task['max_participants']}"
+        f"👥 Всего: {len(participants)}/{task['max_participants']}"
     )
 
     return {"status": "ok"}
@@ -169,10 +196,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👋 Привет, {user.first_name}!\n\nЯ бот студсовета. Выбери что тебя интересует 👇",
         reply_markup=main_menu()
     )
-    await update.message.reply_text(
-        "Чтобы записаться на задачу — заходи на сайт:",
-        reply_markup=site_button()
-    )
+    await update.message.reply_text("Чтобы записаться на задачу — заходи на сайт:", reply_markup=site_button())
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -180,14 +204,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == "🆔 Мой Telegram ID":
         await update.message.reply_text(
-            f"Твой Telegram ID:\n`{telegram_id}`\n\n"
-            f"Введи его на сайте при регистрации.",
+            f"Твой Telegram ID:\n`{telegram_id}`\n\nВведи его на сайте при регистрации.",
             parse_mode="Markdown", reply_markup=main_menu()
         )
-        await update.message.reply_text(
-            "Перейти на сайт:",
-            reply_markup=site_button()
-        )
+        await update.message.reply_text("Перейти на сайт:", reply_markup=site_button())
 
     elif text == "📋 Мои задачи":
         all_p = get_all_participants()
@@ -202,8 +222,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for p in my:
             task = get_task_by_id(p["task_id"])
             if task:
+                status = " 🔒 _закрыта_" if str(task.get("status", "")).lower() == "closed" else ""
                 msg += (
-                    f"📌 *{task['title']}*\n"
+                    f"📌 *{task['title']}*{status}\n"
                     f"🏢 {task['department']}\n"
                     f"📅 Проверка 1: {task['check_date_1']}\n"
                     f"📅 Проверка 2: {task['check_date_2']}\n"
@@ -220,7 +241,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = "📅 *Ближайшие даты:*\n\n"
         for p in my:
             task = get_task_by_id(p["task_id"])
-            if task:
+            if task and str(task.get("status", "")).lower() != "closed":
                 msg += (
                     f"📌 *{task['title']}*\n"
                     f"🔍 Проверка 1: {task['check_date_1']}\n"
@@ -233,21 +254,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ──────────────────────────────────────────────
 # ПЛАНИРОВЩИК
 # ──────────────────────────────────────────────
-@app.get("/test-reminders")
-async def test_reminders():
-    await send_reminders()
-    return {"status": "ok", "message": "Уведомления отправлены"}
 async def send_reminders():
     logger.info("Проверяем напоминания...")
 
-    # За 3 дня до дедлайна
     for item in get_upcoming_checks(days_ahead=3):
         if item["event"] == "deadline":
             p, task = item["participant"], item["task"]
             await notify(int(p["telegram_id"]),
                 f"📌 Через 3 дня дедлайн по задаче *{task['title']}*!\nНе забудь.")
 
-    # За 1 день до проверки или дедлайна
     for item in get_upcoming_checks(days_ahead=1):
         p, task, event = item["participant"], item["task"], item["event"]
         if event == "check_date_1":
@@ -260,12 +275,22 @@ async def send_reminders():
             continue
         await notify(int(p["telegram_id"]), text)
 
-    # В день дедлайна
     for item in get_upcoming_checks(days_ahead=0):
-        if item["event"] == "deadline":
-            p, task = item["participant"], item["task"]
-            await notify(int(p["telegram_id"]),
-                f"🚨 Сегодня дедлайн по задаче *{task['title']}*!\nПоследний день!")
+        p, task, event = item["participant"], item["task"], item["event"]
+        if event == "check_date_1":
+            text = f"🔍 Сегодня проверка 1 по задаче *{task['title']}*!\nБудь готов."
+        elif event == "check_date_2":
+            text = f"🔍 Сегодня проверка 2 по задаче *{task['title']}*!\nБудь готов."
+        elif event == "deadline":
+            text = f"🚨 Сегодня дедлайн по задаче *{task['title']}*!\nПоследний день!"
+        else:
+            continue
+        await notify(int(p["telegram_id"]), text)
+
+@app.get("/test-reminders")
+async def test_reminders():
+    await send_reminders()
+    return {"status": "ok", "message": "Уведомления отправлены"}
 
 
 # ──────────────────────────────────────────────
