@@ -287,6 +287,9 @@ async def send_reminders():
             continue
         await notify(int(p["telegram_id"]), text)
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 @app.get("/test-reminders")
 async def test_reminders():
     await send_reminders()
