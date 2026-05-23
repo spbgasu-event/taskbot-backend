@@ -261,18 +261,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=main_menu()
             )
             return
-        msg = "📋 *Твои задачи:*\n\n"
+        msg = "📋 *Твои активные задачи:*\n\n"
         for p in my:
             task = get_task_by_id(p["task_id"])
-            if task:
-                status = " 🔒 _закрыта_" if str(task.get("status", "")).lower() == "closed" else ""
+            if task and str(task.get("status", "")).lower() != "closed":
                 msg += (
-                    f"📌 *{task['title']}*{status}\n"
+                    f"📌 *{task['title']}*\n"
                     f"🏢 {task['department']}\n"
                     f"📅 Проверка 1: {task['check_date_1']}\n"
                     f"📅 Проверка 2: {task['check_date_2']}\n"
                     f"🏁 Дедлайн: {task['deadline']}\n\n"
                 )
+        if msg == "📋 *Твои активные задачи:*\n\n":
+            msg = "✅ У тебя нет активных задач на данный момент."
         await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=main_menu())
 
     elif text == "📅 Ближайшие даты":
@@ -291,6 +292,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"🔍 Проверка 2: {task['check_date_2']}\n"
                     f"🏁 Дедлайн: {task['deadline']}\n\n"
                 )
+        if msg == "📅 *Ближайшие даты:*\n\n":
+            msg = "✅ Нет активных задач с датами."
         await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=main_menu())
 
 
@@ -330,6 +333,10 @@ async def send_reminders():
             continue
         await notify(int(p["telegram_id"]), text)
 
+
+# ──────────────────────────────────────────────
+# HEALTH & UTILS
+# ──────────────────────────────────────────────
 @app.get("/health")
 def health():
     return {"status": "ok"}
