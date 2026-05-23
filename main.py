@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException
@@ -31,9 +32,51 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=TELEGRAM_TOKEN)
 
 # ──────────────────────────────────────────────
+# LIFESPAN — запуск и остановка бота вместе с сервером
+# ──────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- СТАРТ ---
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(send_reminders, "cron", hour=5, minute=0)  # 5:00 UTC = 8:00 МСК
+    scheduler.start()
+    logger.info("✅ Планировщик запущен")
+
+    tg_app = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .connect_timeout(30)
+        .read_timeout(30)
+        .write_timeout(30)
+        .build()
+    )
+    tg_app.add_handler(CommandHandler("start", start_handler))
+    tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
+
+    async def error_handler(update, context):
+        logger.error("Telegram error: %s", context.error)
+
+    tg_app.add_error_handler(error_handler)
+
+    await tg_app.initialize()
+    await tg_app.start()
+    await tg_app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("✅ Telegram бот запущен")
+
+    yield  # сервер работает
+
+    # --- ОСТАНОВКА ---
+    await tg_app.updater.stop()
+    await tg_app.stop()
+    await tg_app.shutdown()
+    scheduler.shutdown()
+    logger.info("✅ Бот остановлен")
+
+
+# ──────────────────────────────────────────────
 # FASTAPI
 # ──────────────────────────────────────────────
-app = FastAPI(title="TaskBot API")
+app = FastAPI(title="TaskBot API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -290,42 +333,8 @@ async def send_reminders():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
 @app.get("/test-reminders")
 async def test_reminders():
     await send_reminders()
     return {"status": "ok", "message": "Уведомления отправлены"}
-
-
-# ──────────────────────────────────────────────
-# ЗАПУСК
-# ──────────────────────────────────────────────
-async def main():
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(send_reminders, "cron", hour=5, minute=0)  # 5:00 UTC = 8:00 МСК
-    scheduler.start()
-    logger.info("✅ Планировщик запущен")
-
-    tg_app = (
-        Application.builder()
-        .token(TELEGRAM_TOKEN)
-        .connect_timeout(30)
-        .read_timeout(30)
-        .write_timeout(30)
-        .build()
-    )
-    tg_app.add_handler(CommandHandler("start", start_handler))
-    tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
-    await tg_app.initialize()
-    await tg_app.start()
-    await tg_app.updater.start_polling()
-    logger.info("✅ Telegram бот запущен")
-
-    import uvicorn
-    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
-    server = uvicorn.Server(config)
-    logger.info("✅ FastAPI сервер запущен на http://localhost:8000")
-    await server.serve()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
