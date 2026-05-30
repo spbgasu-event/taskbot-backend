@@ -288,6 +288,20 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/debug-sheets")
+def debug_sheets():
+    """Временный эндпоинт для диагностики — удалить после фикса."""
+    import traceback
+    try:
+        from sheets import get_spreadsheet
+        ss = get_spreadsheet()
+        ws = ss.worksheet("tasks")
+        rows = ws.get_all_records()
+        return {"status": "ok", "rows": len(rows)}
+    except Exception as e:
+        return {"status": "error", "error": str(e), "trace": traceback.format_exc()}
+
+
 @app.get("/departments")
 def departments(telegram_id: Optional[int] = Query(None)):
     role = get_participant_role(telegram_id) if telegram_id else "member"
