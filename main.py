@@ -241,7 +241,12 @@ app = FastAPI(title="TaskBot API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*", "X-Admin-Secret", "Content-Type", "Authorization"],
+    expose_headers=["*"],
+    allow_credentials=False,
+    max_age=600,
 )
 
 
