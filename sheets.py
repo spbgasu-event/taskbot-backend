@@ -27,10 +27,20 @@ def get_spreadsheet() -> gspread.Spreadsheet:
 
 # ── Вспомогательные ───────────────────────────────────────────
 def _ws_ensure_col(ws, col_name: str) -> int:
-    """Добавляет колонку если её нет; возвращает 1-based номер колонки."""
+    """Добавляет колонку если её нет; расширяет лист при необходимости."""
     headers = ws.row_values(1)
     if col_name not in headers:
-        ws.update_cell(1, len(headers) + 1, col_name)
+        new_col = len(headers) + 1
+        # Расширяем лист если не хватает колонок
+        props = ws.spreadsheet.fetch_sheet_metadata()
+        sheet_meta = next(
+            (s for s in props["sheets"] if s["properties"]["sheetId"] == ws.id), None
+        )
+        if sheet_meta:
+            max_cols = sheet_meta["properties"]["gridProperties"]["columnCount"]
+            if new_col > max_cols:
+                ws.resize(cols=new_col + 4)  # +4 запас
+        ws.update_cell(1, new_col, col_name)
         headers.append(col_name)
     return headers.index(col_name) + 1
 
