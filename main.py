@@ -289,22 +289,27 @@ def health():
 
 
 
+def _get_role(telegram_id: Optional[int]) -> str:
+    if not telegram_id:
+        return "member"
+    if telegram_id == ORGANIZER_TELEGRAM_ID:
+        return "admin"
+    return get_participant_role(telegram_id)
+
+
 @app.get("/departments")
 def departments(telegram_id: Optional[int] = Query(None)):
-    role = get_participant_role(telegram_id) if telegram_id else "member"
-    return {"departments": get_departments(role)}
+    return {"departments": get_departments(_get_role(telegram_id))}
 
 
 @app.get("/tasks/{department}")
 def tasks_by_dept(department: str, telegram_id: Optional[int] = Query(None)):
-    role = get_participant_role(telegram_id) if telegram_id else "member"
-    return {"tasks": get_tasks_by_department(department, role)}
+    return {"tasks": get_tasks_by_department(department, _get_role(telegram_id))}
 
 
 @app.get("/tasks-open")
 def open_tasks(telegram_id: Optional[int] = Query(None)):
-    role = get_participant_role(telegram_id) if telegram_id else "member"
-    return {"tasks": get_tasks_for_role(role)}
+    return {"tasks": get_tasks_for_role(_get_role(telegram_id))}
 
 
 @app.get("/tasks-closed")
@@ -333,7 +338,12 @@ def get_participant(telegram_id: int):
 
 @app.get("/profile/{telegram_id}")
 def profile(telegram_id: int):
-    return get_user_stats(telegram_id)
+    stats = get_user_stats(telegram_id)
+    # Организатор всегда admin — даже если не записан на задачи
+    if telegram_id == ORGANIZER_TELEGRAM_ID:
+        stats["role"] = "admin"
+        stats["name"] = stats["name"] or "Организатор"
+    return stats
 
 
 @app.get("/leaderboard")
@@ -585,14 +595,23 @@ async def send_weekly_digest():
 # ── /start + онбординг ────────────────────────
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    existing = get_participant_by_telegram(user.id)
 
+    # Организатор — особый случай, не требует записи в таблицу
+    if user.id == ORGANIZER_TELEGRAM_ID:
+        await update.message.reply_text(
+            f"⚙️ Привет, организатор!\n\n"
+            f"Панель управления: /admin\n"
+            f"Профиль: /profile",
+            reply_markup=main_menu(user.id),
+        )
+        return ConversationHandler.END
+
+    existing = get_participant_by_telegram(user.id)
     if existing:
-        # Уже зарегистрирован
         await update.message.reply_text(
             f"👋 С возвращением, {existing['name']}!\n"
-            f"Роль: {role_label(existing.get('role','intern'))} · "
-            f"Баллы: {existing.get('points',0)}",
+            f"Роль: {role_label(str(existing.get('role','intern') or 'intern'))} · "
+            f"Баллы: {existing.get('points', 0)}",
             reply_markup=main_menu(user.id),
         )
         await update.message.reply_text("Записаться на задачу:", reply_markup=site_button())
