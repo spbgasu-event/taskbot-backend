@@ -1,34 +1,27 @@
 import gspread
 import os
 import json
-from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 
 SPREADSHEET_ID = "1lmXv8npThRsCmnSnJYIEfS8g4jLlJli7rvAJuifxsxI"
 CREDENTIALS_FILE = "credentials.json"
 INTERN_DEPT = "Стажёры"
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
-
 ROLES = ("intern", "member", "admin")
 POINTS_PER_TASK = 10  # баллов за выполненную задачу
 
 
 # ── Подключение ───────────────────────────────────────────────
-def get_client():
+def get_client() -> gspread.Client:
     google_creds = os.environ.get("GOOGLE_CREDENTIALS")
     if google_creds:
         creds_dict = json.loads(google_creds)
-        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        return gspread.service_account_from_dict(creds_dict)
     else:
-        creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=SCOPES)
-    return gspread.authorize(creds)
+        return gspread.service_account(filename=CREDENTIALS_FILE)
 
 
-def get_spreadsheet():
+def get_spreadsheet() -> gspread.Spreadsheet:
     return get_client().open_by_key(SPREADSHEET_ID)
 
 
