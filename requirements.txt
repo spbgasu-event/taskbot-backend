@@ -1,7 +1,8 @@
 fastapi
-uvicorn
+uvicorn[standard]
 gspread
 google-auth
-python-telegram-bot
+python-telegram-bot[job-queue]
 apscheduler
 pydantic
+httpx
