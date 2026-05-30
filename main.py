@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request, Header, Query, Depends
+from fastapi import FastAPI, HTTPException, Request, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -205,7 +205,14 @@ async def lifespan(app: FastAPI):
     tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
 
     async def error_handler(update, context):
-        logger.error("Telegram error: %s", context.error)
+        logger.error("Telegram error: %s", context.error, exc_info=context.error)
+        if update and update.message:
+            try:
+                await update.message.reply_text(
+                    "⚠️ Произошла ошибка. Попробуй ещё раз или напиши /start"
+                )
+            except Exception:
+                pass
 
     tg_app.add_error_handler(error_handler)
 
@@ -448,29 +455,22 @@ async def submit_task(task_id: int, req: SubmitRequest):
 
 
 # ── Эндпоинты для организатора (требуют X-Admin-Secret) ───────
-def _admin_secret(
-    x_admin_secret: Optional[str] = Header(None),
-    admin_secret: Optional[str] = Query(None),
-) -> str:
-    """Принимает секрет из заголовка X-Admin-Secret ИЛИ query-параметра admin_secret."""
-    return x_admin_secret or admin_secret or ""
-
-
 @app.get("/tasks-all")
-def all_tasks(secret: str = Depends(_admin_secret)):
-    _require_admin(secret)
+def all_tasks(admin_secret: Optional[str] = Query(None)):
+    _require_admin(admin_secret)
     return {"tasks": get_all_tasks()}
 
 
 @app.get("/participants-all")
-def all_participants(secret: str = Depends(_admin_secret)):
-    _require_admin(secret)
+def all_participants(admin_secret: Optional[str] = Query(None)):
+    _require_admin(admin_secret)
     return {"participants": get_unique_participants()}
 
 
 @app.post("/task")
-def create_task_endpoint(req: TaskCreateRequest, secret: str = Depends(_admin_secret)):
-    _require_admin(secret)
+def create_task_endpoint(req: TaskCreateRequest,
+                         admin_secret: Optional[str] = Query(None)):
+    _require_admin(admin_secret)
     task = create_task(req.title, req.department, req.description,
                        req.max_participants, req.checkpoints)
     return {"status": "ok", "task": task}
@@ -478,8 +478,8 @@ def create_task_endpoint(req: TaskCreateRequest, secret: str = Depends(_admin_se
 
 @app.put("/task/{task_id}")
 def update_task_endpoint(task_id: int, req: TaskUpdateRequest,
-                         secret: str = Depends(_admin_secret)):
-    _require_admin(secret)
+                         admin_secret: Optional[str] = Query(None)):
+    _require_admin(admin_secret)
     updates = req.model_dump(exclude_none=True)
     if "checkpoints" in updates:
         updates["checkpoints"] = json.dumps(updates["checkpoints"], ensure_ascii=False)
@@ -489,16 +489,18 @@ def update_task_endpoint(task_id: int, req: TaskUpdateRequest,
 
 
 @app.delete("/task/{task_id}")
-def delete_task_endpoint(task_id: int, secret: str = Depends(_admin_secret)):
-    _require_admin(secret)
+def delete_task_endpoint(task_id: int,
+                         admin_secret: Optional[str] = Query(None)):
+    _require_admin(admin_secret)
     if not delete_task(task_id):
         raise HTTPException(status_code=404, detail="Задача не найдена")
     return {"status": "ok"}
 
 
 @app.post("/task/{task_id}/close")
-def close_task_endpoint(task_id: int, secret: str = Depends(_admin_secret)):
-    _require_admin(secret)
+def close_task_endpoint(task_id: int,
+                        admin_secret: Optional[str] = Query(None)):
+    _require_admin(admin_secret)
     if not close_task(task_id):
         raise HTTPException(status_code=404, detail="Задача не найдена")
     return {"status": "ok"}
@@ -506,8 +508,8 @@ def close_task_endpoint(task_id: int, secret: str = Depends(_admin_secret)):
 
 @app.post("/participant/{telegram_id}/role")
 def set_role(telegram_id: int, req: RoleUpdateRequest,
-             secret: str = Depends(_admin_secret)):
-    _require_admin(secret)
+             admin_secret: Optional[str] = Query(None)):
+    _require_admin(admin_secret)
     if req.role not in ROLES:
         raise HTTPException(status_code=400, detail=f"Допустимые роли: {ROLES}")
     set_participant_role(telegram_id, req.role)
@@ -515,27 +517,28 @@ def set_role(telegram_id: int, req: RoleUpdateRequest,
 
 
 @app.get("/checklist")
-def checklist(secret: str = Depends(_admin_secret)):
-    _require_admin(secret)
+def checklist(admin_secret: Optional[str] = Query(None)):
+    _require_admin(admin_secret)
     return {"checklist": get_checklist()}
 
 
 @app.post("/checklist/update")
-def checklist_update(req: ChecklistUpdate, secret: str = Depends(_admin_secret)):
-    _require_admin(secret)
+def checklist_update(req: ChecklistUpdate,
+                     admin_secret: Optional[str] = Query(None)):
+    _require_admin(admin_secret)
     update_checklist(req.updates)
     return {"status": "ok"}
 
 
 @app.get("/stats/failed")
-def failed_stats(secret: str = Depends(_admin_secret)):
-    _require_admin(secret)
+def failed_stats(admin_secret: Optional[str] = Query(None)):
+    _require_admin(admin_secret)
     return {"failed": get_failed_participants()}
 
 
 @app.get("/test-reminders")
-async def test_reminders(secret: str = Depends(_admin_secret)):
-    _require_admin(secret)
+async def test_reminders(admin_secret: Optional[str] = Query(None)):
+    _require_admin(admin_secret)
     await send_reminders()
     return {"status": "ok"}
 
