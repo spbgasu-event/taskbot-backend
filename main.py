@@ -226,10 +226,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # ── Остановка ──
-    try:
-        await bot.delete_webhook(drop_pending_updates=False)
-    except Exception as e:
-        logger.warning(f"delete_webhook: {e}")
+    # Webhook НЕ удаляем — при rolling deploy новый инстанс уже поставил его,
+    # удаление здесь сбрасывает webhook и бот перестаёт работать.
     await tg_app.stop()
     await tg_app.shutdown()
     scheduler.shutdown()
