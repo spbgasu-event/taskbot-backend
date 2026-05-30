@@ -470,10 +470,14 @@ def all_participants(admin_secret: Optional[str] = Query(None)):
 @app.post("/task")
 def create_task_endpoint(req: TaskCreateRequest,
                          admin_secret: Optional[str] = Query(None)):
+    import traceback
     _require_admin(admin_secret)
-    task = create_task(req.title, req.department, req.description,
-                       req.max_participants, req.checkpoints)
-    return {"status": "ok", "task": task}
+    try:
+        task = create_task(req.title, req.department, req.description,
+                           req.max_participants, req.checkpoints)
+        return {"status": "ok", "task": task}
+    except Exception as e:
+        return {"status": "error", "error": str(e), "trace": traceback.format_exc()}
 
 
 @app.put("/task/{task_id}")
@@ -509,11 +513,15 @@ def close_task_endpoint(task_id: int,
 @app.post("/participant/{telegram_id}/role")
 def set_role(telegram_id: int, req: RoleUpdateRequest,
              admin_secret: Optional[str] = Query(None)):
+    import traceback
     _require_admin(admin_secret)
     if req.role not in ROLES:
         raise HTTPException(status_code=400, detail=f"Допустимые роли: {ROLES}")
-    set_participant_role(telegram_id, req.role)
-    return {"status": "ok"}
+    try:
+        set_participant_role(telegram_id, req.role)
+        return {"status": "ok"}
+    except Exception as e:
+        return {"status": "error", "error": str(e), "trace": traceback.format_exc()}
 
 
 @app.get("/checklist")
